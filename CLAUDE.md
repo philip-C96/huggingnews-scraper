@@ -62,20 +62,31 @@ then `... list data/latest.txt` on every session start, and always exits 0
    c. Once fixed and verified working end-to-end (`setup` then `list` both
       succeed and produce real content), **do not push the fix to `main`
       directly.** Create a branch named `claude/fix-scraper-<short-reason>`,
-      commit the fix there, push that branch, and open a PR against the
-      default branch (`gh pr create` or equivalent) describing what broke and
-      what changed. This repo's routine only has default (`claude/`-prefixed)
-      push access, not unrestricted push — pushing straight to `main` will be
-      rejected with a 403 anyway, so don't spend time retrying that.
-   d. Make the PR the notification: there's no live user to ping mid-run, so
-      the PR is how the owner finds out. In the session's own output /
-      summary (whatever the current task actually produces — e.g. the news
-      digest), say plainly that the scraper broke today, link or name the PR,
-      and note that this run used a manually-fetched result instead of the
-      cached pre-fetch.
-   e. Continue the user's actual task using the freshly (manually) fetched
-      data — don't block their request on the PR being reviewed or merged.
-      Never modify `main` yourself; leave the merge decision to the owner.
+      commit the fix there, and try to push that branch, then open a PR
+      against the default branch (`gh pr create` or equivalent) describing
+      what broke and what changed. Never attempt to push straight to `main`
+      — that's expected to be rejected with a 403 regardless of whether the
+      `claude/`-prefixed push below succeeds, so don't spend time retrying it.
+   d. **If the `claude/`-prefixed push or PR creation fails too**, don't loop
+      on it or treat it as blocking — give up after one attempt, keep the fix
+      only in this session's working tree, and fall through to the
+      notification step below with that caveat included. As of 2026-07,
+      push/PR access requires the **Claude GitHub App** to be installed on
+      this repo (see "Repo access this routine needs" below) — if it's ever
+      uninstalled or access changes again, this is the first thing to check,
+      but the task itself must never wait on that being fixed.
+   e. Make sure the owner finds out one way or another, since there's no live
+      user to ping mid-run:
+      - If the PR was opened successfully, that's the primary notification.
+      - Either way, say plainly in the session's own output / summary
+        (whatever the current task actually produces — e.g. the news digest)
+        that the scraper broke today, whether a PR was opened or the push
+        failed too, and that this run used a manually-fetched result instead
+        of the cached pre-fetch.
+   f. Continue the user's actual task using the freshly (manually) fetched
+      data regardless of how (c) and (d) went — don't block their request on
+      the PR being reviewed, merged, or even successfully opened. Never
+      modify `main` yourself; leave the merge decision to the owner.
 
 ## Files
 
@@ -88,10 +99,18 @@ then `... list data/latest.txt` on every session start, and always exits 0
 
 ## Repo access this routine needs
 
-This repo must be added to the routine's **Select repositories** list (routine
-edit form on claude.ai/code/routines) for the hook and self-heal flow to work
-at all — otherwise every git operation, including cloning, fails with a 403
-before the hook ever runs. **"Allow unrestricted branch pushes" is
-intentionally left off** — the self-heal flow above only ever needs
-`claude/`-prefixed branch pushes, which are allowed by default, so there's no
+Two separate things are both required, and it's easy to only do one:
+
+1. This repo must be added to the routine's **Select repositories** list
+   (routine edit form on claude.ai/code/routines) — otherwise every git
+   operation, including cloning, fails with a 403 before the hook ever runs.
+2. The **Claude GitHub App** must be installed on this repo
+   (github.com/apps/claude → Configure → repository access → add this repo).
+   This was the actual root cause of every push/PR 403 hit while setting this
+   up — repo attachment via (1) alone was not sufficient for push or PR-API
+   access, only for cloning.
+
+**"Allow unrestricted branch pushes" is intentionally left off** — the
+self-heal flow above only ever needs `claude/`-prefixed branch pushes, which
+are allowed by default once (1) and (2) are both in place, so there's no
 need to grant push access to `main`.
