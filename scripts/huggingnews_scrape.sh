@@ -23,9 +23,19 @@
 #      insurance and libnss3-tools installs in a few seconds.
 #
 # USAGE
-#   bash huggingnews_scrape.sh setup            # one-time per fresh container
-#   bash huggingnews_scrape.sh list [outfile]   # render homepage -> outfile (+ .links)
-#   bash huggingnews_scrape.sh article <url>    # render one article -> stdout
+#   bash huggingnews_scrape.sh setup                     # one-time per fresh container
+#   bash huggingnews_scrape.sh list [outfile]            # render homepage -> outfile (+ .links)
+#   bash huggingnews_scrape.sh article <url> [url...]    # render one or more articles -> stdout
+#
+# `article` accepts multiple URLs in one call: they're all fetched through a
+# single browser instance instead of launching Chromium once per URL, and
+# each article's output is trimmed down to title/category/time/score/body -
+# the nav bar, sidebar, and tweet dump that make up ~80% of the raw page text
+# are dropped. When summarizing a day's worth of stories, pass every URL you
+# need at once (`article <url1> <url2> ...`) rather than looping this script
+# once per article - it's both faster and produces far less text to read.
+# The actual Playwright logic lives in scripts/lib/*.js; this file is just a
+# thin CLI wrapper (setup / retries / Chromium path resolution).
 #
 # EXIT CODES: 0 success, 2 bad usage, 3 environment/setup problem,
 #             4 page fetch failed after retries.
@@ -35,7 +45,7 @@
 
 set -euo pipefail
 SCRATCH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+LIBDIR="$SCRATCH/lib"
 # The agent proxy's port is per-shell-session and can change between runs -
 # always read it live from $HTTPS_PROXY rather than hardcoding it.
 PROXY="${HTTPS_PROXY:-http://127.0.0.1:38453}"
@@ -80,13 +90,15 @@ run_node() {
   NODE_PATH=/opt/node22/lib/node_modules node "$@"
 }
 
-# Runs a generated Playwright script with retries, since a flaky proxy hiccup
-# or slow page load shouldn't kill an otherwise-working unattended run.
+# Runs a lib/*.js script (plus its args) with retries, since a flaky proxy
+# hiccup or slow page load shouldn't kill an otherwise-working unattended
+# run. Note: for `article` with multiple URLs, a failure anywhere in the
+# batch retries the WHOLE batch (simpler than per-URL retry bookkeeping, at
+# the cost of re-fetching already-succeeded articles too).
 run_with_retries() {
-  local script="$1"
   local attempt=1
   while true; do
-    if run_node "$script"; then
+    if run_node "$@"; then
       return 0
     fi
     if [ "$attempt" -ge "$RETRIES" ]; then
@@ -101,32 +113,9 @@ run_with_retries() {
 
 cmd_list() {
   local out="${1:-$SCRATCH/rendered.txt}"
-  local chrome js_file
+  local chrome
   chrome="$(resolve_chrome)"
-  js_file="$(mktemp "$SCRATCH/.hn_list.XXXXXX.js")"
-  trap 'rm -f "$js_file"' RETURN
-  cat > "$js_file" <<EOF
-const { chromium } = require('playwright');
-(async () => {
-  const browser = await chromium.launch({
-    executablePath: '$chrome',
-    headless: true,
-    proxy: { server: '$PROXY' },
-    args: ['--ssl-version-max=tls1.2'],
-  });
-  const context = await browser.newContext({ userAgent: '$UA', locale: 'zh-TW' });
-  const page = await context.newPage();
-  await page.goto('https://huggingnews.com/', { waitUntil: 'domcontentloaded', timeout: 60000 });
-  await page.waitForTimeout(5000);
-  const fs = require('fs');
-  fs.writeFileSync('$out', await page.innerText('body'));
-  // also dump every /ai/<slug> story link so callers can map headline -> URL
-  const links = await page.\$\$eval('a.story-row-link', as => as.map(a => a.getAttribute('href')));
-  fs.writeFileSync('$out.links', [...new Set(links)].join('\n'));
-  await browser.close();
-})();
-EOF
-  if run_with_retries "$js_file"; then
+  if run_with_retries "$LIBDIR/hn_list.js" "$chrome" "$PROXY" "$out"; then
     echo "wrote $out and $out.links"
   else
     return 4
@@ -135,40 +124,17 @@ EOF
 
 cmd_article() {
   if [ "$#" -lt 1 ] || [ -z "${1:-}" ]; then
-    echo "usage: $0 article <url>" >&2
+    echo "usage: $0 article <url> [url...]" >&2
     return 2
   fi
-  local url="$1"
-  local chrome js_file
+  local chrome
   chrome="$(resolve_chrome)"
-  js_file="$(mktemp "$SCRATCH/.hn_article.XXXXXX.js")"
-  trap 'rm -f "$js_file"' RETURN
-  # url is embedded in a single-quoted JS string; escape any single quotes
-  # defensively so a stray one can't break out of the string literal.
-  local safe_url="${url//\'/\\\'}"
-  cat > "$js_file" <<EOF
-const { chromium } = require('playwright');
-(async () => {
-  const browser = await chromium.launch({
-    executablePath: '$chrome',
-    headless: true,
-    proxy: { server: '$PROXY' },
-    args: ['--ssl-version-max=tls1.2'],
-  });
-  const context = await browser.newContext({ userAgent: '$UA' });
-  const page = await context.newPage();
-  await page.goto('$safe_url', { waitUntil: 'networkidle', timeout: 45000 });
-  await page.waitForTimeout(1500);
-  console.log(await page.innerText('body'));
-  await browser.close();
-})();
-EOF
-  run_with_retries "$js_file"
+  run_with_retries "$LIBDIR/hn_article.js" "$chrome" "$PROXY" "$@"
 }
 
 case "${1:-}" in
   setup) cmd_setup ;;
   list) shift; cmd_list "$@" ;;
   article) shift; cmd_article "$@" ;;
-  *) echo "usage: $0 {setup|list [outfile]|article <url>}" >&2; exit 2 ;;
+  *) echo "usage: $0 {setup|list [outfile]|article <url> [url...]}" >&2; exit 2 ;;
 esac

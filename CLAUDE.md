@@ -21,7 +21,9 @@ Convex backend, behind Cloudflare. Two things block the obvious approaches:
    makes it unusually large); curl and plain Node `https` don't send that,
    so they're unaffected. Fix: launch Chrome with `--ssl-version-max=tls1.2`.
 
-See `scripts/huggingnews_scrape.sh` for the full implementation and comments.
+See `scripts/huggingnews_scrape.sh` for the CLI wrapper (setup / retries /
+Chromium path resolution) and `scripts/lib/*.js` for the actual Playwright
+logic.
 
 ## What happens automatically
 
@@ -51,8 +53,10 @@ then `... list data/latest.txt` on every session start, and always exits 0
         `ls /opt/pw-browsers`).
       - huggingnews.com changed its DOM/class names (the homepage scrape
         selects `a.story-row-link`; article pages use `page.innerText('body')`
-        and parse plain text — if headline/link extraction comes back empty,
-        inspect the page's current structure).
+        and then trim it via text markers — see `extract()` in
+        `scripts/lib/hn_article.js` — if headline/link extraction comes back
+        empty, or `article` output includes a `WARN: layout markers not
+        found` line, inspect the page's current structure).
       - The TLS workaround itself stopped working (proxy behavior changed) —
         re-run the diagnostic steps in the script's header comment before
         assuming the fix flag needs to change.
@@ -90,12 +94,32 @@ then `... list data/latest.txt` on every session start, and always exits 0
 
 ## Files
 
-- `scripts/huggingnews_scrape.sh` — the scraper (`setup` / `list [outfile]` /
-  `article <url>` subcommands, with retries and clear exit codes)
+- `scripts/huggingnews_scrape.sh` — thin CLI wrapper (`setup` /
+  `list [outfile]` / `article <url> [url...]` subcommands, with retries,
+  Chromium path resolution, and clear exit codes)
+- `scripts/lib/hn_browser.js` — shared Playwright launch config (proxy + TLS
+  workaround) used by both of the below
+- `scripts/lib/hn_list.js` — renders the homepage, writes `outfile` +
+  `outfile.links`
+- `scripts/lib/hn_article.js` — renders one or more article pages through a
+  single browser instance and prints a trimmed title/category/time/score/body
+  block per URL (see `extract()`'s doc comment for how the trim works and
+  how it fails closed if the page layout changes)
 - `.claude/hooks/session-start.sh` — runs the pre-fetch automatically
 - `.claude/settings.json` — registers the hook
 - `data/` — refreshed every session start, gitignored (not meant to be
   committed — only the scraper and hook are source of truth)
+
+## Performance tip: batch article fetches
+
+When a task needs full text for several articles (e.g. "summarize the top 10
+stories from yesterday"), pass every URL to a single `article` call —
+`bash scripts/huggingnews_scrape.sh article <url1> <url2> ... <urlN>` —
+rather than invoking the script once per URL. This fetches all of them
+through one browser instance instead of relaunching Chromium per article, and
+the output is already trimmed to just what's needed to summarize (no nav
+bar, sidebar, or tweet dump), which meaningfully cuts both wall-clock time
+and the amount of text that ends up in context.
 
 ## Repo access this routine needs
 
