@@ -8,14 +8,18 @@
 // day's worth of "top 10" articles at once.
 //
 // Every article page repeats the same layout: <title>, <category>,
-// <timestamp>, <score>, a TOPICS section, a "◇" divider, the body
-// paragraphs, then either an "EARLIER VERSION FROM"/"CONTINUES FROM" note or
-// straight into "KEY SOURCES" (the tweet dump). innerText('body') on its own
-// also drags in the nav bar, sidebar trending list, and every tweet excerpt -
-// which is 80-90% of the raw text and none of it is needed to summarize the
-// story. extract() keeps just the title/category/time/score/body and drops
-// the rest. If huggingnews.com's layout changes and the markers this relies
-// on ("TOPICS", "◇") disappear, it fails closed: returns the full page text
+// <timestamp>, <score>, a TOPICS section (TOPICS/TAGS/KEYWORDS blocks), a
+// blank line, the body paragraphs, then either an "EARLIER VERSION
+// FROM"/"CONTINUES FROM" note or straight into "KEY SOURCES" (the tweet
+// dump). innerText('body') on its own also drags in the nav bar, sidebar
+// trending list, and every tweet excerpt - which is 80-90% of the raw text
+// and none of it is needed to summarize the story. extract() keeps just the
+// title/category/time/score/body and drops the rest. The body's start used
+// to be marked by a literal "◇" divider line; as of 2026-07 that divider is
+// gone and the body now starts right after the first blank line following
+// TOPICS (i.e. right after the KEYWORDS list), so that's what this looks
+// for. If huggingnews.com's layout changes again and "TOPICS" (or a blank
+// line after it) disappears, this fails closed: returns the full page text
 // with trimmed=false rather than silently producing a wrong excerpt - check
 // the article page's current structure if that happens (same troubleshooting
 // step as the homepage's a.story-row-link selector breaking).
@@ -26,8 +30,7 @@ const STOP_MARKERS = ['EARLIER VERSION FROM', 'CONTINUES FROM', 'KEY SOURCES'];
 function extract(rawText) {
   const lines = rawText.split('\n');
   const topicsIdx = lines.indexOf('TOPICS');
-  const diamondIdx = lines.indexOf('◇');
-  if (topicsIdx < 4 || diamondIdx < 0 || diamondIdx < topicsIdx) {
+  if (topicsIdx < 4) {
     return { title: null, category: null, time: null, score: null, body: rawText, trimmed: false };
   }
 
@@ -36,15 +39,27 @@ function extract(rawText) {
   const time = lines[topicsIdx - 2];
   const score = lines[topicsIdx - 1];
 
+  let bodyStartIdx = -1;
+  for (let i = topicsIdx + 1; i < lines.length; i++) {
+    if (lines[i].trim() === '') {
+      bodyStartIdx = i + 1;
+      break;
+    }
+  }
+  if (bodyStartIdx < 0) {
+    return { title: null, category: null, time: null, score: null, body: rawText, trimmed: false };
+  }
+  while (bodyStartIdx < lines.length && lines[bodyStartIdx].trim() === '') bodyStartIdx++;
+
   let stopIdx = lines.length;
-  for (let i = diamondIdx + 1; i < lines.length; i++) {
+  for (let i = bodyStartIdx; i < lines.length; i++) {
     if (STOP_MARKERS.some((m) => lines[i].startsWith(m))) {
       stopIdx = i;
       break;
     }
   }
   const body = lines
-    .slice(diamondIdx + 1, stopIdx)
+    .slice(bodyStartIdx, stopIdx)
     .filter((l) => l.trim() !== '')
     .join('\n\n');
 
