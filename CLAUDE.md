@@ -25,6 +25,16 @@ See `scripts/huggingnews_scrape.sh` for the CLI wrapper (setup / retries /
 Chromium path resolution) and `scripts/lib/*.js` for the actual Playwright
 logic.
 
+**Keep this file in sync.** This is the only place these facts are written
+down, and agents follow it verbatim — a stale claim here (a selector name, a
+file list, an assumption about the site's markup) is worse than no
+documentation, because it's actively misleading rather than merely absent.
+If a fix you make here changes something this file asserts (a selector, a
+marker string, a file's purpose, a failure mode), update the relevant
+section in the same change. This file was already caught out of date once
+(it described story links as always `/ai/<slug>`, which was never fully
+true) — treat that as the standard to avoid, not a one-off.
+
 ## What happens automatically
 
 `.claude/hooks/session-start.sh` runs `scripts/huggingnews_scrape.sh setup`
@@ -32,18 +42,27 @@ then `... list data/latest.txt` on every session start, and always exits 0
 (a scrape failure must never block the session from starting). It writes:
 
 - `data/latest.txt` — homepage text (all visible stories, grouped by date)
-- `data/latest.txt.links` — every story's `/ai/<slug>` URL, one per line
+- `data/latest.txt.links` — every story's URL, one per line (usually
+  `/ai/<slug>`, but some are `/tech/`, `/earnings/`, `/us-markets/`, etc. —
+  path prefix varies by category, don't assume `/ai/`)
 - `data/status.txt` — `OK <UTC timestamp>` or `FAILED <timestamp>` + a log tail
 
 ## What the agent should do at the start of every session
 
 1. Read `data/status.txt` first.
-2. **If it says `OK`** and `data/latest.txt` is non-empty and looks like real
-   content (contains "HuggingNews" and at least one date heading like
-   "Wednesday, Jul"), use `data/latest.txt` / `data/latest.txt.links`
-   directly — do not re-run the scraper just to double-check it.
-3. **If it says `FAILED`**, or the file is missing/empty/obviously stale for
-   the task at hand, treat this as a broken pipeline, not a dead end:
+2. **If it says `OK`**, `data/latest.txt` looks like real content (contains
+   "HuggingNews" and at least one date heading like "Wednesday, Jul"), *and*
+   `data/latest.txt.links` is also non-empty, use both files directly — do
+   not re-run the scraper just to double-check it. Check the `.links` file
+   too, not just `latest.txt`: the homepage's link selector
+   (`a.story-row-link` in `hn_list.js`) can silently return zero results if
+   huggingnews.com's markup changes, and `session-start.sh` still writes
+   `OK` in that case since nothing actually threw — an empty or
+   suspiciously-short `.links` file with a normal-looking `latest.txt` is
+   itself a sign the homepage scrape partially broke.
+3. **If status says `FAILED`, or either file is missing/empty/obviously
+   stale/broken** (per the `.links` check above) for the task at hand, treat
+   this as a broken pipeline, not a dead end:
    a. Run `bash scripts/huggingnews_scrape.sh setup` and
       `bash scripts/huggingnews_scrape.sh list data/latest.txt` manually and
       read the actual error.
@@ -52,11 +71,29 @@ then `... list data/latest.txt` on every session start, and always exits 0
         should already handle this dynamically — if it still fails, check
         `ls /opt/pw-browsers`).
       - huggingnews.com changed its DOM/class names (the homepage scrape
-        selects `a.story-row-link`; article pages use `page.innerText('body')`
-        and then trim it via text markers — see `extract()` in
-        `scripts/lib/hn_article.js` — if headline/link extraction comes back
-        empty, or `article` output includes a `WARN: layout markers not
-        found` line, inspect the page's current structure).
+        selects `a.story-row-link`) or the article page's text layout
+        around the `TOPICS`/`TAGS`/`KEYWORDS` block (article pages use
+        `page.innerText('body')`, then trim it via text markers — see
+        `extract()` in `scripts/lib/hn_article.js`). Signs of this:
+        headline/link extraction comes back empty, or `article` output
+        includes a `WARN: layout markers not found` line.
+        **This has already happened once** (the site dropped a literal "◇"
+        divider it used to print between the KEYWORDS list and the body;
+        `extract()` now also accepts a plain blank line, and treats both as
+        interchangeable — see `DIVIDER_LINES` in `hn_article.js`), so expect
+        it to happen again in some other way.
+        **A `WARN` here is a degraded mode, not a hard stop**: the raw page
+        text is still printed even when trimming fails, and the actual
+        article body is still readable inside it (usually right after the
+        KEYWORDS list, before "KEY SOURCES" or the tweet dump) — read it
+        directly and keep going with the user's actual task. Only treat this
+        as something to *fix* (steps c–e below) if it's happening broadly
+        across articles, not as a blocker for the task in front of you.
+        `scripts/lib/hn_article.test.js` unit-tests `extract()` directly
+        against synthetic page text (no browser needed) — run it with
+        `NODE_PATH=/opt/node22/lib/node_modules node
+        scripts/lib/hn_article.test.js` to check whether a suspected
+        extraction bug is real before spending time on a live-site fix.
       - The TLS workaround itself stopped working (proxy behavior changed) —
         re-run the diagnostic steps in the script's header comment before
         assuming the fix flag needs to change.
@@ -105,6 +142,10 @@ then `... list data/latest.txt` on every session start, and always exits 0
   single browser instance and prints a trimmed title/category/time/score/body
   block per URL (see `extract()`'s doc comment for how the trim works and
   how it fails closed if the page layout changes)
+- `scripts/lib/hn_article.test.js` — unit tests for `extract()` against
+  synthetic page text (no browser/network needed); run with
+  `NODE_PATH=/opt/node22/lib/node_modules node
+  scripts/lib/hn_article.test.js`
 - `.claude/hooks/session-start.sh` — runs the pre-fetch automatically
 - `.claude/settings.json` — registers the hook
 - `data/` — refreshed every session start, gitignored (not meant to be
