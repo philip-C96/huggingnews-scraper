@@ -17,7 +17,9 @@ async function main() {
     await page.goto('https://huggingnews.com/', { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.waitForTimeout(5000);
     fs.writeFileSync(outFile, await page.innerText('body'));
-    // every /ai/<slug> story link, so callers can map headline -> URL
+    // every story link (usually /ai/<slug>, but some are /tech/, /earnings/,
+    // /us-markets/, etc. - path prefix varies by category), so callers can
+    // map headline -> URL
     const links = await page.$$eval('a.story-row-link', (as) => as.map((a) => a.getAttribute('href')));
     fs.writeFileSync(outFile + '.links', [...new Set(links)].join('\n'));
   } finally {
