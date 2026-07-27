@@ -8,24 +8,27 @@
 // day's worth of "top 10" articles at once.
 //
 // Every article page repeats the same layout: <title>, <category>,
-// <timestamp>, <score>, a TOPICS section (TOPICS/TAGS/KEYWORDS blocks), a
-// blank line, the body paragraphs, then either an "EARLIER VERSION
+// <timestamp>, <score>, a TOPICS section (TOPICS/TAGS/KEYWORDS blocks), then
+// a divider, then the body paragraphs, then either an "EARLIER VERSION
 // FROM"/"CONTINUES FROM" note or straight into "KEY SOURCES" (the tweet
 // dump). innerText('body') on its own also drags in the nav bar, sidebar
 // trending list, and every tweet excerpt - which is 80-90% of the raw text
 // and none of it is needed to summarize the story. extract() keeps just the
-// title/category/time/score/body and drops the rest. The body's start used
-// to be marked by a literal "◇" divider line; as of 2026-07 that divider is
-// gone and the body now starts right after the first blank line following
-// TOPICS (i.e. right after the KEYWORDS list), so that's what this looks
-// for. If huggingnews.com's layout changes again and "TOPICS" (or a blank
-// line after it) disappears, this fails closed: returns the full page text
-// with trimmed=false rather than silently producing a wrong excerpt - check
-// the article page's current structure if that happens (same troubleshooting
-// step as the homepage's a.story-row-link selector breaking).
+// title/category/time/score/body and drops the rest. The divider used to be
+// a literal "◇" line; as of 2026-07 that's gone and the only remaining
+// marker is a blank line right after the KEYWORDS list. DIVIDER_LINES below
+// treats both as interchangeable "skip past this" chrome, so this keeps
+// working if huggingnews.com ever reintroduces "◇" (with or without a blank
+// line on either side of it) as well as the current blank-line-only layout.
+// If "TOPICS" itself disappears, or neither divider form follows it, this
+// fails closed: returns the full page text with trimmed=false rather than
+// silently producing a wrong excerpt - check the article page's current
+// structure if that happens (same troubleshooting step as the homepage's
+// a.story-row-link selector breaking).
 const { launch, UA } = require('./hn_browser');
 
 const STOP_MARKERS = ['EARLIER VERSION FROM', 'CONTINUES FROM', 'KEY SOURCES'];
+const DIVIDER_LINES = new Set(['', '◇']);
 
 function extract(rawText) {
   const lines = rawText.split('\n');
@@ -41,7 +44,7 @@ function extract(rawText) {
 
   let bodyStartIdx = -1;
   for (let i = topicsIdx + 1; i < lines.length; i++) {
-    if (lines[i].trim() === '') {
+    if (DIVIDER_LINES.has(lines[i].trim())) {
       bodyStartIdx = i + 1;
       break;
     }
@@ -49,7 +52,7 @@ function extract(rawText) {
   if (bodyStartIdx < 0) {
     return { title: null, category: null, time: null, score: null, body: rawText, trimmed: false };
   }
-  while (bodyStartIdx < lines.length && lines[bodyStartIdx].trim() === '') bodyStartIdx++;
+  while (bodyStartIdx < lines.length && DIVIDER_LINES.has(lines[bodyStartIdx].trim())) bodyStartIdx++;
 
   let stopIdx = lines.length;
   for (let i = bodyStartIdx; i < lines.length; i++) {
@@ -115,7 +118,11 @@ async function main() {
   if (hadFailure) process.exit(4);
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+module.exports = { extract };
+
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
