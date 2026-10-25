@@ -68,7 +68,8 @@ then `... list data/latest.txt` on every session start, and always exits 0
       read the actual error.
    b. Diagnose and fix `scripts/huggingnews_scrape.sh`. Common failure modes:
       - Chromium's bundled version directory changed (`resolve_chrome()`
-        should already handle this dynamically — if it still fails, check
+        globs `chromium-*/chrome-linux*/chrome`, so both the version number and
+        the `chrome-linux`→`chrome-linux64` rename are handled — this broke once, 2026-10 — if it still fails, check
         `ls /opt/pw-browsers`).
       - huggingnews.com changed its DOM/class names (the homepage scrape
         selects `a.story-row-link`) or the article page's text layout
