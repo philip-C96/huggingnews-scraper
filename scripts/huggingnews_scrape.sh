@@ -56,9 +56,9 @@ RETRIES="${HN_RETRIES:-3}"
 # instead of hardcoding, and fail with a clear message if none is found.
 resolve_chrome() {
   local candidate
-  candidate="$(ls -d /opt/pw-browsers/chromium-*/chrome-linux/chrome 2>/dev/null | head -1)"
+  candidate="$(ls -d /opt/pw-browsers/chromium-*/chrome-linux*/chrome 2>/dev/null | head -1)"
   if [ -z "$candidate" ] || [ ! -x "$candidate" ]; then
-    echo "ERROR: no Chromium executable found under /opt/pw-browsers/chromium-*/chrome-linux/chrome" >&2
+    echo "ERROR: no Chromium executable found under /opt/pw-browsers/chromium-*/chrome-linux*/chrome" >&2
     echo "       (the pre-installed browser path may have changed - check 'ls /opt/pw-browsers')" >&2
     exit 3
   fi
