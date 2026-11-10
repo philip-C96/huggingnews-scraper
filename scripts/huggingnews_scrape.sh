@@ -56,9 +56,13 @@ RETRIES="${HN_RETRIES:-3}"
 # instead of hardcoding, and fail with a clear message if none is found.
 resolve_chrome() {
   local candidate
-  candidate="$(ls -d /opt/pw-browsers/chromium-*/chrome-linux/chrome 2>/dev/null | head -1)"
+  # Playwright has used both chrome-linux/ and chrome-linux64/ as the
+  # directory name; also accept the /opt/pw-browsers/chromium symlink.
+  candidate="$(ls -d /opt/pw-browsers/chromium-*/chrome-linux64/chrome \
+                     /opt/pw-browsers/chromium-*/chrome-linux/chrome \
+                     /opt/pw-browsers/chromium 2>/dev/null | head -1)"
   if [ -z "$candidate" ] || [ ! -x "$candidate" ]; then
-    echo "ERROR: no Chromium executable found under /opt/pw-browsers/chromium-*/chrome-linux/chrome" >&2
+    echo "ERROR: no Chromium executable found under /opt/pw-browsers/chromium-*/chrome-linux{64,}/chrome or /opt/pw-browsers/chromium" >&2
     echo "       (the pre-installed browser path may have changed - check 'ls /opt/pw-browsers')" >&2
     exit 3
   fi
